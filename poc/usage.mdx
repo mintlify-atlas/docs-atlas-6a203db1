@@ -1,0 +1,103 @@
+---
+title: "Running the Copy Fail CVE-2026-31431 PoC Exploit"
+description: "How to run the CVE-2026-31431 proof-of-concept on a vulnerable kernel in an isolated research environment. Requires only Python 3 and a local user account."
+---
+
+The Copy Fail proof of concept is a single Python 3 script that demonstrates local privilege escalation by overwriting `/usr/bin/su` using a splice/AEAD race condition. These instructions are intended for use on isolated research systems only — see the warning below before proceeding.
+
+<Warning>
+**For authorized research use only.** Running this exploit modifies a system binary (`/usr/bin/su`) and escalates privileges to root. Only run this on a system you own or have **explicit written permission** to test. Unauthorized use is illegal under the Computer Fraud and Abuse Act (CFAA), the UK Computer Misuse Act, and equivalent laws in most jurisdictions. The authors and Theori/Xint accept no liability for misuse.
+</Warning>
+
+## Prerequisites
+
+Before running the exploit, confirm the following:
+
+- **Python 3** is installed (`python3 --version`)
+- You are running on a [vulnerable kernel version](/affected-systems) — the exploit targets specific Linux kernel builds
+- You have a **non-root local user account** — root or sudo access is not required and is not the starting condition; gaining root is the goal
+- The target system is **isolated** (VM, container, or air-gapped lab machine) and not connected to production networks
+
+<Note>
+The whole point of CVE-2026-31431 is that no elevated privileges are needed to trigger the exploit. Start as an ordinary unprivileged user.
+</Note>
+
+## Usage instructions
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Copy Fail repository from GitHub to your research machine:
+
+    ```bash
+    git clone https://github.com/theori-io/copy-fail-CVE-2026-31431.git
+    cd copy-fail-CVE-2026-31431
+    ```
+  </Step>
+
+  <Step title="Verify the kernel version">
+    Check that your system is running a vulnerable kernel. Compare the output against the [affected systems](/affected-systems) table:
+
+    ```bash
+    uname -r
+    ```
+
+    Example output on a vulnerable system:
+
+    ```text
+    6.17.0-1007-aws
+    ```
+
+    If your kernel version does not appear in the affected systems list, the exploit is unlikely to succeed on that host.
+  </Step>
+
+  <Step title="Run the exploit script">
+    Execute the proof-of-concept as an unprivileged user:
+
+    ```bash
+    python3 copy_fail_exp.py
+    ```
+
+    The script requires no arguments. It reads the target binary path (`/usr/bin/su`) directly and embeds the replacement payload.
+  </Step>
+
+  <Step title="Observe the result">
+    The script overwrites `/usr/bin/su` with the embedded payload and then immediately calls `su` to execute the overwritten binary. A successful run drops you into a root shell.
+
+    Expected terminal output:
+
+    ```
+    # whoami
+    root
+    ```
+
+    If the exploit succeeds, the prompt changes to `#` and `whoami` returns `root`.
+  </Step>
+</Steps>
+
+## What the script does
+
+At a high level, `copy_fail_exp.py`:
+
+1. Opens `/usr/bin/su` with read-only permissions (no write access required)
+2. Decompresses a zlib-compressed replacement binary payload embedded in the script
+3. Writes the payload into `/usr/bin/su` in 4-byte chunks using the splice/AEAD kernel primitive
+4. Calls `os.system("su")` to execute the now-overwritten binary
+
+The overwrite works because the kernel incorrectly allows a writable path to a read-only memory-mapped file when splice is combined with an AEAD socket. See the [code walkthrough](/poc/code-walkthrough) for a full technical explanation.
+
+## Restoring the system
+
+After testing, restore the original `su` binary from your distribution's package manager:
+
+```bash
+# Debian / Ubuntu
+sudo apt install --reinstall login
+
+# RHEL / Amazon Linux
+sudo dnf reinstall shadow-utils
+
+# SUSE
+sudo zypper install -f shadow
+```
+
+Alternatively, restore from a snapshot if you are working in a VM.

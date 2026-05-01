@@ -1,0 +1,172 @@
+---
+title: "Applying Official Kernel Patches for CVE-2026-31431"
+description: "Per-distribution instructions to update your kernel on Ubuntu, Amazon Linux, RHEL, and SUSE and verify you are protected against CVE-2026-31431."
+---
+
+Official kernel patches are available for all affected distributions. Applying the patched kernel is the only complete fix for CVE-2026-31431 — workarounds can reduce exposure but do not eliminate the underlying vulnerability. The instructions below walk you through updating the kernel on each affected distribution and verifying that your system is running a patched version.
+
+<Info>
+  For a full technical analysis of the vulnerability, see the [Copy Fail writeup](https://xint.io/blog/copy-fail-linux-distributions) published by Theori/Xint.
+</Info>
+
+## Affected kernel versions
+
+The following kernel versions are confirmed vulnerable. Any version at or below these should be treated as unpatched:
+
+| Distribution | Vulnerable kernel version |
+|---|---|
+| Ubuntu 24.04 LTS | `6.17.0-1007-aws` |
+| Amazon Linux 2023 | `6.18.8-9.213.amzn2023` |
+| RHEL 10.1 | `6.12.0-124.45.1.el10_1` |
+| SUSE 16 | `6.12.0-160000.9-default` |
+
+## Apply patches by distribution
+
+<Tabs>
+  <Tab title="Ubuntu 24.04 LTS">
+    <Steps>
+      <Step title="Update the package index">
+        Refresh the local package list to ensure you retrieve the latest available kernel packages.
+
+        ```bash
+        sudo apt update
+        ```
+      </Step>
+      <Step title="Upgrade the AWS kernel image">
+        Install the patched kernel. If you are running a different kernel variant (e.g., `linux-image-generic`), substitute the appropriate package name.
+
+        ```bash
+        sudo apt upgrade linux-image-aws
+        ```
+      </Step>
+      <Step title="Reboot into the new kernel">
+        The updated kernel is only active after a reboot.
+
+        ```bash
+        sudo reboot
+        ```
+      </Step>
+      <Step title="Verify the running kernel version">
+        After the system restarts, confirm you are no longer running the vulnerable version.
+
+        ```bash
+        uname -r
+        ```
+
+        <Check>
+          Your kernel version should be **higher than** `6.17.0-1007-aws`. If it is, your system is patched.
+        </Check>
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Amazon Linux 2023">
+    <Steps>
+      <Step title="Update the kernel package">
+        Use `dnf` to pull in the latest kernel from the Amazon Linux 2023 repositories.
+
+        ```bash
+        sudo dnf update kernel
+        ```
+      </Step>
+      <Step title="Reboot into the new kernel">
+        ```bash
+        sudo reboot
+        ```
+      </Step>
+      <Step title="Verify the running kernel version">
+        ```bash
+        uname -r
+        ```
+
+        <Check>
+          Your kernel version should be **higher than** `6.18.8-9.213.amzn2023`. If it is, your system is patched.
+        </Check>
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="RHEL 10.1">
+    <Steps>
+      <Step title="Update the kernel package">
+        Use `dnf` to install the latest kernel from Red Hat's repositories. You can also check the [Red Hat CVE portal](https://access.redhat.com/security/cve/CVE-2026-31431) for the specific advisory and errata package.
+
+        ```bash
+        sudo dnf update kernel
+        ```
+      </Step>
+      <Step title="Reboot into the new kernel">
+        ```bash
+        sudo reboot
+        ```
+      </Step>
+      <Step title="Verify the running kernel version">
+        ```bash
+        uname -r
+        ```
+
+        <Check>
+          Your kernel version should be **higher than** `6.12.0-124.45.1.el10_1`. If it is, your system is patched.
+        </Check>
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="SUSE 16">
+    <Steps>
+      <Step title="Update the default kernel package">
+        Use `zypper` to install the patched kernel.
+
+        ```bash
+        sudo zypper update kernel-default
+        ```
+      </Step>
+      <Step title="Reboot into the new kernel">
+        ```bash
+        sudo reboot
+        ```
+      </Step>
+      <Step title="Verify the running kernel version">
+        ```bash
+        uname -r
+        ```
+
+        <Check>
+          Your kernel version should be **higher than** `6.12.0-160000.9-default`. If it is, your system is patched.
+        </Check>
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Checking your kernel version manually
+
+If you are unsure whether a system is patched — for example, when auditing a fleet of hosts — run the following command and compare the output against the vulnerable versions listed in the table above:
+
+```bash
+uname -r
+```
+
+You can also check the installed kernel packages without rebooting:
+
+```bash
+# Debian/Ubuntu
+dpkg -l | grep linux-image
+
+# RHEL / Amazon Linux 2023
+rpm -qa kernel
+
+# SUSE
+rpm -qa kernel-default
+```
+
+<Note>
+  If a newer kernel package is installed but the system has not been rebooted, `uname -r` will still report the old running kernel. Always reboot after applying the update and verify with `uname -r` post-reboot.
+</Note>
+
+## Official advisories
+
+- [Theori/Xint technical writeup](https://xint.io/blog/copy-fail-linux-distributions) — Root cause analysis and exploitation details
+- Ubuntu Security Notices — check `ubuntu.com/security/CVE-2026-31431`
+- Red Hat CVE database — `access.redhat.com/security/cve/CVE-2026-31431`
+- SUSE CVE tracker — `www.suse.com/security/cve/CVE-2026-31431`

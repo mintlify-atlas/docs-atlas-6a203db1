@@ -1,0 +1,171 @@
+---
+title: "CVE-2026-31431 Workarounds for Unpatched Systems"
+description: "Short-term mitigations for CVE-2026-31431: block AF_ALG sockets via seccomp or AppArmor, monitor with auditd, and add file integrity monitoring (AIDE)."
+---
+
+In some environments, applying a kernel update immediately is not feasible — for example, due to change-freeze windows, testing requirements, or fleet-wide rollout schedules. The options below can reduce your exposure to CVE-2026-31431 until a patched kernel can be deployed. They address different parts of the attack surface and can be layered together for stronger coverage.
+
+<Warning>
+  These are **temporary mitigations, not permanent fixes**. None of the options below fully eliminate the vulnerability. The splice/AEAD interaction that enables write-back into read-only mapped files exists at the kernel level and can only be resolved by applying an official kernel patch. Treat these steps as a stopgap measure only.
+</Warning>
+
+<Note>
+  The definitive fix is upgrading to a patched kernel. See [Applying official kernel patches](/mitigation/patches) for per-distribution update instructions.
+</Note>
+
+## Workaround options
+
+### 1. Restrict access to AF_ALG sockets
+
+The exploit requires creating an `AF_ALG` (kernel crypto API) socket. Blocking unprivileged processes from making this call is the most direct way to interrupt the attack chain without applying a kernel patch.
+
+**Using seccomp:**
+
+Create a seccomp profile that denies `socket(AF_ALG, ...)` calls. The following profile blocks the `socket` syscall when the first argument resolves to `AF_ALG` (value `38`):
+
+```bash
+# Install the seccomp profile tooling if not already present
+sudo apt install libseccomp-dev   # Ubuntu/Debian
+sudo dnf install libseccomp-devel # RHEL/Amazon Linux
+```
+
+Apply the profile to your workloads via your container runtime, systemd `SystemCallFilter`, or directly in application code.
+
+**Using AppArmor:**
+
+Add the following denial rule to the relevant AppArmor profile to block AF_ALG socket creation for the target process:
+
+```bash
+deny network af_alg,
+```
+
+Reload the profile after editing:
+
+```bash
+sudo apparmor_parser -r /etc/apparmor.d/<profile-name>
+```
+
+**Using SELinux:**
+
+Create a custom SELinux policy module that denies the `create` permission on `alg_socket` for untrusted process domains, then install and enable it:
+
+```bash
+semodule -i deny-af-alg.pp
+```
+
+---
+
+### 2. Monitor for exploitation attempts
+
+Enable audit logging for unexpected writes to system binaries. The exploit overwrites executables such as `/usr/bin/su` in-place, which audit rules can detect.
+
+<Steps>
+  <Step title="Install auditd if not already running">
+    ```bash
+    sudo apt install auditd   # Ubuntu/Debian
+    sudo dnf install audit    # RHEL/Amazon Linux
+    sudo zypper install audit # SUSE
+    ```
+  </Step>
+  <Step title="Add watch rules for high-value binaries">
+    ```bash
+    sudo auditctl -w /usr/bin/su -p wa -k copy_fail_watch
+    sudo auditctl -w /usr/bin/sudo -p wa -k copy_fail_watch
+    sudo auditctl -w /usr/bin/passwd -p wa -k copy_fail_watch
+    ```
+  </Step>
+  <Step title="Make the rules persistent across reboots">
+    Append the same rules to `/etc/audit/rules.d/copy-fail.rules`:
+
+    ```bash
+    -w /usr/bin/su -p wa -k copy_fail_watch
+    -w /usr/bin/sudo -p wa -k copy_fail_watch
+    -w /usr/bin/passwd -p wa -k copy_fail_watch
+    ```
+  </Step>
+  <Step title="Search for triggered events">
+    ```bash
+    sudo ausearch -k copy_fail_watch
+    ```
+  </Step>
+</Steps>
+
+---
+
+### 3. Use file integrity monitoring (FIM)
+
+File integrity monitoring tools detect changes to SUID binaries and other sensitive files by comparing current state against a known-good baseline. This will not prevent exploitation but will alert you if an attack has already succeeded.
+
+**AIDE:**
+
+```bash
+# Install
+sudo apt install aide       # Ubuntu/Debian
+sudo dnf install aide       # RHEL/Amazon Linux
+
+# Initialize the baseline database
+sudo aideinit
+
+# Run a check against the baseline
+sudo aide --check
+```
+
+**Tripwire:**
+
+```bash
+# Install
+sudo apt install tripwire   # Ubuntu/Debian
+
+# Initialize the database after policy configuration
+sudo tripwire --init
+
+# Run an integrity check
+sudo tripwire --check
+```
+
+Schedule FIM checks via cron or your configuration management tooling and alert on any unexpected changes to files in `/usr/bin/`, `/usr/sbin/`, and `/bin/`.
+
+---
+
+### 4. Restrict unprivileged user namespaces
+
+On systems where it applies, disabling unprivileged user namespace creation raises the bar for exploitation by removing a common prerequisite for kernel exploit primitives.
+
+<Warning>
+  This is a partial mitigation only. CVE-2026-31431 does not strictly require user namespaces, so this setting alone is insufficient. It also breaks certain legitimate applications (e.g., rootless containers, some sandboxed browsers).
+</Warning>
+
+```bash
+# Disable unprivileged user namespaces (takes effect immediately, not persistent)
+sudo sysctl kernel.unprivileged_userns_clone=0
+
+# Make the setting persistent across reboots
+echo "kernel.unprivileged_userns_clone=0" | sudo tee /etc/sysctl.d/99-disable-userns.conf
+sudo sysctl -p /etc/sysctl.d/99-disable-userns.conf
+```
+
+To verify the setting is active:
+
+```bash
+sysctl kernel.unprivileged_userns_clone
+```
+
+---
+
+### 5. Prioritize kernel upgrade
+
+If none of the above mitigations are deployable in your environment, prioritize moving affected systems to a patched kernel as fast as your change management process allows. Systems running vulnerable kernels that are internet-accessible or shared with untrusted users are at highest risk.
+
+<Note>
+  See [Applying official kernel patches](/mitigation/patches) for exact commands and version verification steps for each affected distribution.
+</Note>
+
+## Summary of mitigations
+
+| Mitigation | Effectiveness | Disruption risk |
+|---|---|---|
+| Restrict AF_ALG via seccomp/AppArmor/SELinux | High — blocks the primary attack vector | Low for most workloads |
+| Audit writes to SUID binaries | Detection only — does not prevent exploitation | None |
+| File integrity monitoring (AIDE, Tripwire) | Detection only — post-exploitation indicator | None |
+| Disable unprivileged user namespaces | Partial — may raise bar for some exploit paths | Medium — breaks rootless containers |
+| Apply patched kernel | Complete fix | Requires reboot |

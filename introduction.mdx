@@ -1,0 +1,53 @@
+---
+title: "Copy Fail CVE-2026-31431: Linux Kernel Privilege Escalation"
+description: "CVE-2026-31431 lets unprivileged local users overwrite read-only setuid binaries via a splice and AEAD socket kernel bug, achieving full root access."
+---
+
+Copy Fail (CVE-2026-31431) is a Linux kernel vulnerability discovered by [Theori / Xint](https://xint.io) that enables local privilege escalation on a wide range of production Linux distributions. By exploiting a race condition in the kernel's `splice` and AEAD socket subsystems, an unprivileged process can overwrite the contents of otherwise read-only, executable files — such as `/usr/bin/su` — and gain root access.
+
+<Warning>
+This documentation covers a real, actively exploitable vulnerability. The proof-of-concept code and technical details are published for **security research and defensive purposes only**. Do not use this exploit on systems you do not own or have explicit permission to test.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Affected Systems" icon="list-check" href="/affected-systems">
+    See which Linux distributions and kernel versions are vulnerable
+  </Card>
+  <Card title="Vulnerability Overview" icon="bug" href="/vulnerability/overview">
+    Understand the nature and impact of CVE-2026-31431
+  </Card>
+  <Card title="Proof of Concept" icon="flask" href="/poc/usage">
+    Run the PoC exploit in a controlled research environment
+  </Card>
+  <Card title="Mitigation" icon="shield-check" href="/mitigation/patches">
+    Apply patches and workarounds to protect your systems
+  </Card>
+</CardGroup>
+
+## What is Copy Fail?
+
+Copy Fail targets a flaw in how the Linux kernel handles cross-VMA (Virtual Memory Area) splice operations combined with AEAD (Authenticated Encryption with Associated Data) sockets. The attack lets an unprivileged attacker write arbitrary bytes into a read-only memory-mapped file by:
+
+1. Opening a privileged binary (e.g. `/usr/bin/su`) without write permissions
+2. Creating an AEAD socket with a specially crafted `setsockopt` configuration
+3. Using `splice` to transfer data across a pipe into the target file descriptor
+4. Repeating the operation in 4-byte chunks to inject a custom payload
+
+The result is a full overwrite of the target binary, which executes as root on the next invocation.
+
+## Severity
+
+| Property | Value |
+|----------|-------|
+| CVE ID | CVE-2026-31431 |
+| CVSS Score | Critical |
+| Attack Vector | Local |
+| Privileges Required | None |
+| Impact | Full privilege escalation to root |
+
+## Quick Links
+
+- [Technical writeup](https://xint.io/blog/copy-fail-linux-distributions) — Full analysis by Theori/Xint
+- [GitHub repository](https://github.com/theori-io/copy-fail-CVE-2026-31431) — Source code and PoC
+- [Affected systems](/affected-systems) — Distro and kernel version matrix
+- [Patches and fixes](/mitigation/patches) — How to protect your systems

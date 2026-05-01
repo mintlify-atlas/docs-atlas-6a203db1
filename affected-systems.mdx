@@ -1,0 +1,47 @@
+---
+title: "Linux Distros and Kernels Affected by CVE-2026-31431"
+description: "CVE-2026-31431 affects major Linux distributions on kernels 6.12.x–6.18.x, including Ubuntu 24.04, Amazon Linux 2023, RHEL 10.1, and SUSE 16."
+---
+
+CVE-2026-31431 affects Linux systems running kernels in the **6.12.x through 6.18.x** range. The vulnerability was confirmed across four major enterprise and cloud distributions by Theori/Xint researchers, covering both AWS-optimized kernels and general-purpose distributions. Any unpatched system in this kernel range should be treated as vulnerable until a vendor patch is applied.
+
+<Warning>
+Systems running unpatched kernels in the 6.12.x–6.18.x range are exploitable by any local, unprivileged user. The exploit requires no special capabilities and can escalate to root by overwriting a setuid binary such as `/usr/bin/su`.
+</Warning>
+
+## Tested distributions
+
+The following distributions and kernel versions were confirmed vulnerable during research:
+
+| Distribution | Kernel version |
+|---|---|
+| Ubuntu 24.04 LTS | `6.17.0-1007-aws` |
+| Amazon Linux 2023 | `6.18.8-9.213.amzn2023` |
+| RHEL 10.1 | `6.12.0-124.45.1.el10_1` |
+| SUSE 16 | `6.12.0-160000.9-default` |
+
+## Affected kernel range
+
+Based on the tested versions, the vulnerability is present across kernels from **6.12.x** (as shipped in RHEL 10.1 and SUSE 16) through **6.18.x** (as shipped in Amazon Linux 2023). This range spans both long-term support kernels and recent upstream releases, and includes distribution-specific variants such as AWS-optimized builds.
+
+Kernels outside this range — including older 5.x or 6.0–6.11 kernels, and kernels with vendor backports of the fix — may not be affected. Confirm with your distribution's security advisory.
+
+## Check your kernel version
+
+<Note>
+Run `uname -r` on any Linux system to print the running kernel version. Compare the output against the affected range and your vendor's advisory to determine whether a patch is needed.
+
+```bash
+uname -r
+```
+
+Example output on a vulnerable system:
+
+```text
+6.17.0-1007-aws
+```
+</Note>
+
+## Next steps
+
+If your system is running an affected kernel, see [Patches and fixes](/mitigation/patches) for vendor patch status and available workarounds.

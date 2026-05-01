@@ -1,0 +1,60 @@
+{
+  "projectType": "general",
+  "projectName": "Copy Fail - CVE-2026-31431",
+  "projectDescription": "A proof-of-concept exploit for CVE-2026-31431, a Linux kernel privilege escalation vulnerability affecting multiple major distributions.",
+  "theme": "aspen",
+  "primaryColor": "#1c1c1c",
+  "lightColor": "#040404",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Overview",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "affected-systems"
+            ]
+          },
+          {
+            "group": "Vulnerability Details",
+            "pages": [
+              "vulnerability/overview",
+              "vulnerability/root-cause",
+              "vulnerability/exploitation"
+            ]
+          },
+          {
+            "group": "Proof of Concept",
+            "pages": [
+              "poc/usage",
+              "poc/code-walkthrough"
+            ]
+          },
+          {
+            "group": "Mitigation",
+            "pages": [
+              "mitigation/patches",
+              "mitigation/workarounds"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Linux kernel privilege escalation via splice/pipe exploitation",
+    "Exploits AEAD socket setsockopt to overwrite kernel memory",
+    "Overwrites /usr/bin/su binary in-place without write permissions",
+    "Tested on Ubuntu 24.04, Amazon Linux 2023, RHEL 10.1, and SUSE 16",
+    "Python-based PoC exploit script",
+    "Affects kernel versions 6.12.x through 6.18.x"
+  ],
+  "publicApiSurface": [
+    "copy_fail_exp.py - main exploit script",
+    "c(f, t, c) - core exploitation function using AEAD socket + splice",
+    "CVE-2026-31431 - assigned CVE identifier"
+  ]
+}
